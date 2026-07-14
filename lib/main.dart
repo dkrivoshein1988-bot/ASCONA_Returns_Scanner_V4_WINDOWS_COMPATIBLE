@@ -141,15 +141,19 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
   final _commentController = TextEditingController();
   final _manualCodeController = TextEditingController();
   final _imagePicker = ImagePicker();
+  final _scannerController = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+    facing: CameraFacing.back,
+  );
 
   List<ReturnRecord> _records = [];
   String _marketplace = 'OZON';
   String _shift = 'День';
   String _condition = 'Принят';
   bool _compactMode = true;
+  bool _cameraEnabled = false;
   bool _cameraPermissionDenied = false;
   bool _codeTargetDialogOpen = false;
-  bool _barcodeScanBusy = false;
   bool _ocrBusy = false;
   String? _editingId;
 
@@ -177,6 +181,7 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
     _itemNameController.dispose();
     _commentController.dispose();
     _manualCodeController.dispose();
+    _scannerController.dispose();
     super.dispose();
   }
 
@@ -274,70 +279,11 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
     });
   }
 
-  Future<void> _scanCodeFromPhoto() async {
-    if (_barcodeScanBusy) return;
-    final status = await Permission.camera.request();
-    if (!status.isGranted) {
-      setState(() {
-        _cameraPermissionDenied = true;
-      });
-      _showMessage('Разрешите доступ к камере в настройках Android');
-      return;
-    }
-
-    if (!mounted) return;
+  void _toggleCamera() {
     setState(() {
       _cameraPermissionDenied = false;
-      _barcodeScanBusy = true;
+      _cameraEnabled = !_cameraEnabled;
     });
-
-    final scanner = MobileScannerController(autoStart: false);
-    try {
-      final image = await _imagePicker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 100,
-      );
-      if (image == null) return;
-
-      final capture = await scanner.analyzeImage(image.path);
-      final codes = capture?.barcodes
-              .map((barcode) => barcode.rawValue ?? barcode.displayValue ?? '')
-              .map((value) => value.trim())
-              .where((value) => value.isNotEmpty)
-              .toSet()
-              .toList() ??
-          <String>[];
-
-      if (!mounted) return;
-      if (codes.isEmpty) {
-        _showMessage('Код не найден. Сфотографируйте ближе и без бликов');
-        return;
-      }
-
-      final code = codes.length == 1 ? codes.first : await _chooseDetectedCode(codes);
-      if (code != null) await _handleScannedCode(code);
-    } catch (error) {
-      if (mounted) _showMessage('Не удалось распознать код: $error');
-    } finally {
-      await scanner.dispose();
-      if (mounted) setState(() => _barcodeScanBusy = false);
-    }
-  }
-
-  Future<String?> _chooseDetectedCode(List<String> codes) {
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('Выберите найденный код'),
-        children: [
-          for (final code in codes)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, code),
-              child: Text(code),
-            ),
-        ],
-      ),
-    );
   }
 
   Future<void> _recognizeTextFromCamera() async {
@@ -347,6 +293,11 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
       setState(() => _cameraPermissionDenied = true);
       _showMessage('Разрешите доступ к камере в настройках Android');
       return;
+    }
+
+    if (_cameraEnabled) {
+      setState(() => _cameraEnabled = false);
+      await Future<void>.delayed(const Duration(milliseconds: 350));
     }
 
     if (!mounted) return;
@@ -775,27 +726,30 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Container(
-                height: 150,
-                color: const Color(0xFF111827),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.qr_code_2, color: Colors.white, size: 46),
-                    const SizedBox(height: 8),
-                    Text(
-                      _cameraPermissionDenied
-                          ? 'Нет доступа к камере'
-                          : _barcodeScanBusy
-                              ? 'Поиск кода на фотографии...'
-                              : 'Сканирование через штатную камеру',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  ],
-                ),
+              child: SizedBox(
+                height: 260,
+                child: _cameraEnabled
+                    ? MobileScanner(
+                        controller: _scannerController,
+                        onDetect: (capture) {
+                          final value = capture.barcodes.isEmpty
+                              ? null
+                              : capture.barcodes.first.rawValue;
+                          if (value != null) _handleScannedCode(value);
+                        },
+                      )
+                    : Container(
+                        color: const Color(0xFF111827),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          _cameraPermissionDenied
+                              ? 'Нет доступа к камере\nОткройте настройки приложения и разрешите камеру'
+                              : 'Камера остановлена\nНажмите «Запустить сканер»',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ),
               ),
             ),
             const SizedBox(height: 10),
@@ -803,16 +757,10 @@ class _ReturnsHomePageState extends State<ReturnsHomePage> {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: _barcodeScanBusy ? null : _scanCodeFromPhoto,
-                    icon: _barcodeScanBusy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.camera_alt_outlined),
+                    onPressed: _toggleCamera,
+                    icon: Icon(_cameraEnabled ? Icons.stop : Icons.qr_code_scanner),
                     label: Text(
-                      _barcodeScanBusy ? 'Распознавание кода...' : 'Сфотографировать штрихкод',
+                      _cameraEnabled ? 'Остановить' : 'Запустить сканер',
                     ),
                   ),
                 ),
