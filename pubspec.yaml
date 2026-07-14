@@ -1,7 +1,7 @@
 name: ascona_returns_scanner
 description: ASCONA Scanner MVP for marketplace returns processing.
 publish_to: "none"
-version: 0.4.0+4
+version: 0.5.0+5
 
 environment:
   sdk: ">=3.7.0 <4.0.0"
@@ -13,7 +13,7 @@ dependencies:
   flutter_tesseract_ocr: ^0.4.31
   image_cropper: ^12.2.1
   image_picker: ^1.2.3
-  mobile_scanner: ^7.2.0
+  mobile_scanner: 5.2.3
   permission_handler: ^11.3.1
   shared_preferences: ^2.3.2
   path_provider: ^2.1.4
